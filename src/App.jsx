@@ -19,17 +19,14 @@ function App() {
   const [connData, setConnData] = useState({
     connected: false,
     loading: false,
+    socketId: "",
     server: "http://localhost:5000",
     config:
-      '{"path": "/socket.io", "forceNew": true, "reconnectionAttempts": 3, "timeout": 2000, "auth": {"token": "-JWT-"}}',
+      '{"path": "/socket.io", "forceNew": true, "reconnectionAttempts": 3, "timeout": 2000, "extraHeaders": {"token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJub3RpZmljYXRpb25fcHJlZmVyZW5jZXMiOnsiZW1haWwiOmZhbHNlLCJzbXMiOmZhbHNlLCJhbGFybSI6ZmFsc2UsImNhbGwiOmZhbHNlLCJhbGV4YSI6ZmFsc2V9LCJ2ZXJpZmllZCI6ZmFsc2UsImxhc3RfYWN0aXZlIjoiQXVndXN0IDI3LCAyMDIxIGF0IDEwOjM4OjE3IEFNIEdNVCs1OjMwIiwiYWN0aXZlX3NvY2tldCI6IjJjSVBhd1paQ205NFd4TXNBQUFBIiwib25saW5lIjp0cnVlLCJpc19wcm9mZXNzaW9uYWwiOmZhbHNlLCJhdmF0YXIiOiIiLCJtZW1iZXJzIjpbXSwiX2lkIjoiNjEyNGRjZDlhOTZmMDEzYTA0MjZkMDNkIiwiZW1haWwiOiJ0ZXN0bWFpbDJAeW9wbWFpbC5jb20iLCJwaG9uZV9udW1iZXIiOiIxMjMtNDU2Ny0zNDIiLCJuYW1lIjoidGVzdG1haWx1c2VyIiwiaWF0IjoxNjMwMDQwODk3LCJleHAiOjE2MzI2MzI4OTd9.Km-nBAhRlITeU5AKnK3WVKSIRrj0DnU7ZzEC2xeHncQ"}}',
     errors: [],
   });
-
-  const [appConfig, setAppConfig] = useState(0);
-  const [eventsToListenFor, setEventsToListenFor] = useState([
+  const [eventsToListenFor] = useState([
     SOCK_EVENTS.message,
-    SOCK_EVENTS.respond_chat_na,
-    SOCK_EVENTS.respond_chat_ok,
     SOCK_EVENTS.respond_chat_page,
     SOCK_EVENTS.respond_professional_available,
     SOCK_EVENTS.respond_professional_select,
@@ -52,17 +49,25 @@ function App() {
   const [ackHistory, setAckHistory] = useState([]);
 
   const createConnection = (url, config) => {
-    setConnData(() => {
-      return {
-        connected: false,
-        loading: true,
-        socketId: "connecting..",
-        server: url,
-        config: config,
-        errors: [],
-      };
-    });
-    setSocket(() => io(url, JSON.parse(config)));
+    try {
+      setConnData(() => {
+        return {
+          connected: false,
+          loading: true,
+          socketId: "connecting..",
+          server: url,
+          config: config,
+          errors: [],
+        };
+      });
+      setSocket(() =>
+        io(url, {
+          ...JSON.parse(config),
+        })
+      );
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   useEffect(() => {
@@ -87,33 +92,38 @@ function App() {
       addListener(eventsToListenFor);
       setIsReady(() => true);
     });
-  });
+  }, [connData, socket]);
 
   useEffect(() => {}, [listenTo]);
 
   function addListener(channels) {
-    channels.forEach((channel) => {
-      const channelsToAdd = [];
-      if (!listenTo.includes(channel)) {
-        channelsToAdd.push(channel);
-        socket.on(channel, (response) => {
-          // console.log("data received", channel, response);
-          const d = new Date();
-          const data = {
-            key: d.toLocaleString(),
-            date: d,
-            channel: channel,
-            data:
-              typeof response === "string"
-                ? response
-                : JSON.stringify(response, null, 2),
-            dataType: typeof response === "string" ? "string" : "json",
-          };
-          setListenHistory((i) => [data, ...i]);
-        });
-      }
-      setListenTo((items) => [...channelsToAdd, ...items]);
-    });
+    try {
+      channels.forEach((channel) => {
+        const channelsToAdd = [];
+        if (!listenTo.includes(channel)) {
+          channelsToAdd.push(channel);
+
+          socket.on(channel, (response) => {
+            // console.log("data received", channel, response);
+            const d = new Date();
+            const data = {
+              key: d.toLocaleString(),
+              date: d,
+              channel: channel,
+              data:
+                typeof response === "string"
+                  ? response
+                  : JSON.stringify(response, null, 2),
+              dataType: typeof response === "string" ? "string" : "json",
+            };
+            setListenHistory((i) => [data, ...i]);
+          });
+        }
+        setListenTo((items) => [...channelsToAdd, ...items]);
+      });
+    } catch (err) {
+      console.error(err);
+    }
   }
 
   const addEmitTo = (channel) => {
@@ -121,26 +131,30 @@ function App() {
   };
 
   const emitData = (emitChannel, dataToEmit) => {
-    socket.emit(emitChannel, dataToEmit, (ack) => {
+    try {
+      socket.emit(emitChannel, dataToEmit, (ack) => {
+        const date = new Date();
+        const store = {
+          key: date.toUTCString(),
+          channel: emitChannel,
+          date: date,
+          data: ack,
+          type: typeof ack === "string" ? "string" : "json",
+        };
+        setAckHistory((items) => [store, ...items]);
+      });
       const date = new Date();
       const store = {
         key: date.toUTCString(),
         channel: emitChannel,
         date: date,
-        data: ack,
-        type: typeof ack === "string" ? "string" : "json",
+        data: dataToEmit,
+        type: typeof dataToEmit === "string" ? "string" : "json",
       };
-      setAckHistory((items) => [store, ...items]);
-    });
-    const date = new Date();
-    const store = {
-      key: date.toUTCString(),
-      channel: emitChannel,
-      date: date,
-      data: dataToEmit,
-      type: typeof dataToEmit === "string" ? "string" : "json",
-    };
-    setEmitHistory((items) => [store, ...items]);
+      setEmitHistory((items) => [store, ...items]);
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   // const histryStackChannelsFilter = (item, channels) => {
@@ -165,54 +179,55 @@ function App() {
     }
   }
 
-  useEffect(() => {
-    function setHash() {
-      const hashObj = {
-        server: connData.server,
-        listen: listenTo,
-        emit: emitTo,
-        config: connData.config,
-      };
-      window.location.hash = window.btoa(JSON.stringify(hashObj));
-    }
+  // useEffect(() => {
+  //   function setHash() {
+  //     const hashObj = {
+  //       server: connData.server,
+  //       listen: listenTo,
+  //       emit: emitTo,
+  //       config: connData.config,
+  //     };
+  //     window.location.hash = window.btoa(JSON.stringify(hashObj));
+  //   }
 
-    function getHash() {
-      return window.location.hash === ""
-        ? false
-        : JSON.parse(window.atob(window.location.hash.split("#")[1]));
-    }
+  //   function getHash() {
+  //     return window.location.hash === ""
+  //       ? false
 
-    if (connData.connected) {
-      setHash();
-    } else {
-      const d = getHash();
+  //       : JSON.parse(window.atob(window.location.hash.split("#")[1]));
+  //   }
 
-      if (d !== false && appConfig === 0) {
-        // Has hash value on load
-        setAppConfig(() => 1);
-        if (d.listen.length > 0) {
-          setEventsToListenFor(() => d.listen);
-        }
-        setEmitTo(() => d.emit);
-        setConnData(() => {
-          return {
-            connected: false,
-            loading: false,
-            server: d.server,
-            config: d.config,
-            errors: [],
-          };
-        });
-      }
-    }
-  }, [
-    connData.connected,
-    connData.server,
-    connData.config,
-    listenTo,
-    emitTo,
-    appConfig,
-  ]);
+  //   if (connData.connected) {
+  //     setHash();
+  //   } else {
+  //     const d = getHash();
+
+  //     if (d !== false && appConfig === 0) {
+  //       // Has hash value on load
+  //       setAppConfig(() => 1);
+  //       if (d.listen.length > 0) {
+  //         setEventsToListenFor(() => d.listen);
+  //       }
+  //       setEmitTo(() => d.emit);
+  //       setConnData(() => {
+  //         return {
+  //           connected: false,
+  //           loading: false,
+  //           server: d.server,
+  //           config: d.config,
+  //           errors: [],
+  //         };
+  //       });
+  //     }
+  //   }
+  // }, [
+  //   connData.connected,
+  //   connData.server,
+  //   connData.config,
+  //   listenTo,
+  //   emitTo,
+  //   appConfig,
+  // ]);
 
   return (
     <div className="App">
